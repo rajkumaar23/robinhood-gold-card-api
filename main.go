@@ -22,6 +22,22 @@ type Credentials struct {
 	CreditCustomerID string `json:"credit_customer_id"`
 }
 
+type TransactionRequest struct {
+	Credentials
+	Limit         int    `json:"limit"`
+	SortField     string `json:"sort_field"`
+	SortAscending bool   `json:"sort_ascending"`
+}
+
+func (t *TransactionRequest) applyDefaults() {
+	if t.Limit == 0 {
+		t.Limit = 50
+	}
+	if t.SortField == "" {
+		t.SortField = "TIME"
+	}
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -81,16 +97,18 @@ func handleBalance(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleTransactions(w http.ResponseWriter, r *http.Request) {
-	var creds Credentials
-	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+	var req TransactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := creds.validate(); err != nil {
+	if err := req.Credentials.validate(); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	req.applyDefaults()
 
+	creds := req.Credentials
 	token, err := login(creds)
 	if err != nil {
 		jsonError(w, "login failed: "+err.Error(), http.StatusBadGateway)
@@ -129,8 +147,8 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 		"q": map[string]any{
 			"creditCustomerId": creds.CreditCustomerID,
 			"filters":          map[string]any{"values": []string{}},
-			"sortDetails":      map[string]any{"field": "TIME", "ascending": false},
-			"limit":            50,
+			"sortDetails":      map[string]any{"field": req.SortField, "ascending": req.SortAscending},
+			"limit":            req.Limit,
 		},
 	}, &result); err != nil {
 		jsonError(w, "transactions query failed: "+err.Error(), http.StatusBadGateway)
