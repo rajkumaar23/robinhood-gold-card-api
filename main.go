@@ -44,8 +44,8 @@ func main() {
 		port = "8080"
 	}
 
-	http.HandleFunc("/balance", handleBalance)
-	http.HandleFunc("/transactions", handleTransactions)
+	http.HandleFunc("/balance", corsMiddleware(handleBalance))
+	http.HandleFunc("/transactions", corsMiddleware(handleTransactions))
 
 	log.Printf("robinhood-api listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
@@ -267,6 +267,19 @@ func (c Credentials) validate() error {
 }
 
 // --- helpers ---
+
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next(w, r)
+	}
+}
 
 func jsonOK(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

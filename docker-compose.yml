@@ -1,0 +1,9 @@
+services:
+  robinhood-api:
+    image: ghcr.io/rajkumaar23/robinhood-gold-card-api:main
+    container_name: robinhood-gold-card-api
+    restart: unless-stopped
+    ports:
+      - "7342:8080"
+    environment:
+      - PORT=8080
