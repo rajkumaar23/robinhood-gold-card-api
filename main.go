@@ -12,36 +12,43 @@ import (
 	"time"
 )
 
-var cfg struct {
-	username         string
-	password         string
-	deviceToken      string
-	clientID         string
-	creditCustomerID string
-	port             string
-}
-
 const baseURL = "https://api.robinhood.com/creditcard"
 
+type Credentials struct {
+	Username         string `json:"username"`
+	Password         string `json:"password"`
+	DeviceToken      string `json:"device_token"`
+	ClientID         string `json:"client_id"`
+	CreditCustomerID string `json:"credit_customer_id"`
+}
+
 func main() {
-	cfg.username = mustEnv("ROBINHOOD_USERNAME")
-	cfg.password = mustEnv("ROBINHOOD_PASSWORD")
-	cfg.deviceToken = mustEnv("ROBINHOOD_DEVICE_TOKEN")
-	cfg.clientID = mustEnv("ROBINHOOD_CLIENT_ID")
-	cfg.creditCustomerID = mustEnv("ROBINHOOD_CREDIT_CUSTOMER_ID")
-	cfg.port = getEnv("PORT", "8080")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 
 	http.HandleFunc("/balance", handleBalance)
 	http.HandleFunc("/transactions", handleTransactions)
 
-	log.Printf("robinhood-api listening on :%s", cfg.port)
-	log.Fatal(http.ListenAndServe(":"+cfg.port, nil))
+	log.Printf("robinhood-api listening on :%s", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 // --- handlers ---
 
 func handleBalance(w http.ResponseWriter, r *http.Request) {
-	token, err := login()
+	var creds Credentials
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := creds.validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	token, err := login(creds)
 	if err != nil {
 		jsonError(w, "login failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -58,12 +65,12 @@ func handleBalance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var result balanceResponse
-	if err := graphql(token, `
+	if err := graphql(creds, token, `
 		query BalanceQuery($creditCustomerId: String!) {
 			creditAccount(q: {creditCustomerId: $creditCustomerId}) {
 				balances { currentMicro }
 			}
-		}`, "BalanceQuery", map[string]any{"creditCustomerId": cfg.creditCustomerID}, &result); err != nil {
+		}`, "BalanceQuery", map[string]any{"creditCustomerId": creds.CreditCustomerID}, &result); err != nil {
 		jsonError(w, "balance query failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -74,7 +81,17 @@ func handleBalance(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleTransactions(w http.ResponseWriter, r *http.Request) {
-	token, err := login()
+	var creds Credentials
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := creds.validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	token, err := login(creds)
 	if err != nil {
 		jsonError(w, "login failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -100,7 +117,7 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var result txResponse
-	if err := graphql(token, `
+	if err := graphql(creds, token, `
 		query TransactionListQuery($q: TransactionSearchRequest!) {
 			transactionSearch(q: $q) {
 				items {
@@ -110,7 +127,7 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 			}
 		}`, "TransactionListQuery", map[string]any{
 		"q": map[string]any{
-			"creditCustomerId": cfg.creditCustomerID,
+			"creditCustomerId": creds.CreditCustomerID,
 			"filters":          map[string]any{"values": []string{}},
 			"sortDetails":      map[string]any{"field": "TIME", "ascending": false},
 			"limit":            50,
@@ -157,14 +174,14 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 
 // --- Robinhood API helpers ---
 
-func login() (string, error) {
+func login(creds Credentials) (string, error) {
 	body, _ := json.Marshal(map[string]string{
 		"grant_type":     "password",
-		"username":       cfg.username,
-		"password":       cfg.password,
+		"username":       creds.Username,
+		"password":       creds.Password,
 		"scope":          "credit-card",
-		"client_id":      cfg.clientID,
-		"device_token":   cfg.deviceToken,
+		"client_id":      creds.ClientID,
+		"device_token":   creds.DeviceToken,
 		"device_label":   "iPhone - iPhone 16",
 		"challenge_type": "sms",
 	})
@@ -189,7 +206,7 @@ func login() (string, error) {
 	return result.AccessToken, nil
 }
 
-func graphql(token, query, operation string, variables map[string]any, out any) error {
+func graphql(creds Credentials, token, query, operation string, variables map[string]any, out any) error {
 	body, _ := json.Marshal(map[string]any{
 		"query":         query,
 		"operationName": operation,
@@ -199,7 +216,7 @@ func graphql(token, query, operation string, variables map[string]any, out any) 
 	req, _ := http.NewRequest("POST", baseURL+"/graphql", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-X1-Client", fmt.Sprintf("mobile-app-rh@1.84.0@%s", cfg.deviceToken))
+	req.Header.Set("X-X1-Client", fmt.Sprintf("mobile-app-rh@1.84.0@%s", creds.DeviceToken))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -215,6 +232,22 @@ func graphql(token, query, operation string, variables map[string]any, out any) 
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+func (c Credentials) validate() error {
+	switch {
+	case c.Username == "":
+		return fmt.Errorf("missing username")
+	case c.Password == "":
+		return fmt.Errorf("missing password")
+	case c.DeviceToken == "":
+		return fmt.Errorf("missing device_token")
+	case c.ClientID == "":
+		return fmt.Errorf("missing client_id")
+	case c.CreditCustomerID == "":
+		return fmt.Errorf("missing credit_customer_id")
+	}
+	return nil
+}
+
 // --- helpers ---
 
 func jsonOK(w http.ResponseWriter, v any) {
@@ -226,19 +259,4 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
-}
-
-func mustEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		log.Fatalf("required env var %s is not set", key)
-	}
-	return v
-}
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
