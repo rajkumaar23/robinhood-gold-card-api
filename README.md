@@ -2,6 +2,8 @@
 
 A minimal Go HTTP service that exposes the Robinhood Gold Card credit card API — balance and transactions — over two simple POST endpoints.
 
+> The API endpoints, authentication flow, and request/response structure were discovered by reverse engineering the Robinhood iOS app using a MITM proxy.
+
 ## Run
 
 ```bash
