@@ -160,14 +160,12 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 		Description string  `json:"description"`
 		Amount      float64 `json:"amount"`
 		Type        string  `json:"type"`
+		Status      string  `json:"status"`
+		Visibility  string  `json:"visibility"`
 	}
 
 	txs := make([]Transaction, 0)
 	for _, item := range result.Data.TransactionSearch.Items {
-		if item.Visibility != "VISIBLE" || item.TransactionStatus != "POSTED" {
-			continue
-		}
-
 		desc := strings.TrimSpace(strings.Join([]string{
 			item.MerchantDetails.RawMerchantName,
 			item.MerchantDetails.Locality,
@@ -184,6 +182,8 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 			Description: desc,
 			Amount:      item.AmountMicro / 1_000_000,
 			Type:        txType,
+			Status:      item.TransactionStatus,
+			Visibility:  item.Visibility,
 		})
 	}
 
