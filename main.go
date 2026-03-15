@@ -162,7 +162,7 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 		Type        string  `json:"type"`
 	}
 
-	var txs []Transaction
+	txs := make([]Transaction, 0)
 	for _, item := range result.Data.TransactionSearch.Items {
 		if item.Visibility != "VISIBLE" || item.TransactionStatus != "POSTED" {
 			continue
