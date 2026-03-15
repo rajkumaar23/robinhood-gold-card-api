@@ -215,7 +215,7 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		txs = append(txs, Transaction{
-			Date:        time.UnixMilli(item.TransactionAt).Format("2006-01-02"),
+			Date:        time.UnixMilli(item.TransactionAt).Local().Format("2006-01-02"),
 			Description: desc,
 			Amount:      item.AmountMicro / 1_000_000,
 			Type:        txType,

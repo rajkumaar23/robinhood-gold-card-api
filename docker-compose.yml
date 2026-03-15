@@ -7,3 +7,4 @@ services:
       - "7342:8080"
     environment:
       - PORT=8080
+      - TZ=America/Los_Angeles
