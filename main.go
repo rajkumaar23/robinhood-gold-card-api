@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const baseURL = "https://api.robinhood.com/creditcard"
@@ -21,9 +23,8 @@ var tokenCache = struct {
 }{tokens: make(map[string]cachedToken)}
 
 type cachedToken struct {
-	token        string
-	refreshToken string
-	expiresAt    time.Time
+	token     string
+	expiresAt time.Time
 }
 
 func getCachedToken(username string) (string, bool) {
@@ -35,20 +36,13 @@ func getCachedToken(username string) (string, bool) {
 	return "", false
 }
 
-func setCachedToken(username, token, refreshToken string, expiresIn int) {
+func setCachedToken(username, token string, expiresAt time.Time) {
 	tokenCache.Lock()
 	defer tokenCache.Unlock()
 	tokenCache.tokens[username] = cachedToken{
-		token:        token,
-		refreshToken: refreshToken,
-		expiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
+		token:     token,
+		expiresAt: expiresAt,
 	}
-}
-
-func getRefreshToken(username string) string {
-	tokenCache.Lock()
-	defer tokenCache.Unlock()
-	return tokenCache.tokens[username].refreshToken
 }
 
 func invalidateCachedToken(username string) {
@@ -239,34 +233,21 @@ func getToken(creds Credentials) (string, error) {
 	if token, ok := getCachedToken(creds.Username); ok {
 		return token, nil
 	}
-	if rt := getRefreshToken(creds.Username); rt != "" {
-		if token, err := refresh(creds, rt); err == nil {
-			return token, nil
-		}
-		invalidateCachedToken(creds.Username)
-	}
 	return login(creds)
 }
 
-type tokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"`
-}
-
-func parseTokenResponse(resp *http.Response, username string) (string, error) {
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("status %d: %s", resp.StatusCode, b)
+// jwtExpiry extracts the exp claim from a JWT without verifying the signature.
+// Falls back to the provided fallback duration if parsing fails.
+func jwtExpiry(tokenStr string, fallback time.Duration) time.Time {
+	p := jwt.NewParser()
+	claims := jwt.MapClaims{}
+	// ParseUnverified skips signature verification — we only need the exp claim.
+	if _, _, err := p.ParseUnverified(tokenStr, claims); err == nil {
+		if exp, err := claims.GetExpirationTime(); err == nil && exp != nil {
+			return exp.Time
+		}
 	}
-	var result tokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-	if result.ExpiresIn > 0 {
-		setCachedToken(username, result.AccessToken, result.RefreshToken, result.ExpiresIn)
-	}
-	return result.AccessToken, nil
+	return time.Now().Add(fallback)
 }
 
 func login(creds Credentials) (string, error) {
@@ -286,24 +267,22 @@ func login(creds Credentials) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	return parseTokenResponse(resp, creds.Username)
-}
 
-func refresh(creds Credentials, refreshToken string) (string, error) {
-	body, _ := json.Marshal(map[string]string{
-		"grant_type":    "refresh_token",
-		"refresh_token": refreshToken,
-		"scope":         "credit-card",
-		"client_id":     creds.ClientID,
-		"device_token":  creds.DeviceToken,
-	})
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("status %d: %s", resp.StatusCode, b)
+	}
 
-	resp, err := http.Post(baseURL+"/auth/login", "application/json", bytes.NewReader(body))
-	if err != nil {
+	var result struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	return parseTokenResponse(resp, creds.Username)
+	expiresAt := jwtExpiry(result.AccessToken, time.Duration(result.ExpiresIn)*time.Second)
+	setCachedToken(creds.Username, result.AccessToken, expiresAt)
+	return result.AccessToken, nil
 }
 
 func graphql(creds Credentials, token, query, operation string, variables map[string]any, out any) error {
