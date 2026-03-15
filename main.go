@@ -21,8 +21,9 @@ var tokenCache = struct {
 }{tokens: make(map[string]cachedToken)}
 
 type cachedToken struct {
-	token     string
-	expiresAt time.Time
+	token        string
+	refreshToken string
+	expiresAt    time.Time
 }
 
 func getCachedToken(username string) (string, bool) {
@@ -34,13 +35,20 @@ func getCachedToken(username string) (string, bool) {
 	return "", false
 }
 
-func setCachedToken(username, token string, expiresIn int) {
+func setCachedToken(username, token, refreshToken string, expiresIn int) {
 	tokenCache.Lock()
 	defer tokenCache.Unlock()
 	tokenCache.tokens[username] = cachedToken{
-		token:     token,
-		expiresAt: time.Now().Add(time.Duration(expiresIn) * time.Second),
+		token:        token,
+		refreshToken: refreshToken,
+		expiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
 	}
+}
+
+func getRefreshToken(username string) string {
+	tokenCache.Lock()
+	defer tokenCache.Unlock()
+	return tokenCache.tokens[username].refreshToken
 }
 
 func invalidateCachedToken(username string) {
@@ -231,7 +239,34 @@ func getToken(creds Credentials) (string, error) {
 	if token, ok := getCachedToken(creds.Username); ok {
 		return token, nil
 	}
+	if rt := getRefreshToken(creds.Username); rt != "" {
+		if token, err := refresh(creds, rt); err == nil {
+			return token, nil
+		}
+		invalidateCachedToken(creds.Username)
+	}
 	return login(creds)
+}
+
+type tokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+}
+
+func parseTokenResponse(resp *http.Response, username string) (string, error) {
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("status %d: %s", resp.StatusCode, b)
+	}
+	var result tokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if result.ExpiresIn > 0 {
+		setCachedToken(username, result.AccessToken, result.RefreshToken, result.ExpiresIn)
+	}
+	return result.AccessToken, nil
 }
 
 func login(creds Credentials) (string, error) {
@@ -251,23 +286,24 @@ func login(creds Credentials) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	return parseTokenResponse(resp, creds.Username)
+}
 
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("status %d: %s", resp.StatusCode, b)
-	}
+func refresh(creds Credentials, refreshToken string) (string, error) {
+	body, _ := json.Marshal(map[string]string{
+		"grant_type":    "refresh_token",
+		"refresh_token": refreshToken,
+		"scope":         "credit-card",
+		"client_id":     creds.ClientID,
+		"device_token":  creds.DeviceToken,
+	})
 
-	var result struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	resp, err := http.Post(baseURL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
 		return "", err
 	}
-	if result.ExpiresIn > 0 {
-		setCachedToken(creds.Username, result.AccessToken, result.ExpiresIn)
-	}
-	return result.AccessToken, nil
+	defer resp.Body.Close()
+	return parseTokenResponse(resp, creds.Username)
 }
 
 func graphql(creds Credentials, token, query, operation string, variables map[string]any, out any) error {
