@@ -9,10 +9,45 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
 const baseURL = "https://api.robinhood.com/creditcard"
+
+var tokenCache = struct {
+	sync.Mutex
+	tokens map[string]cachedToken
+}{tokens: make(map[string]cachedToken)}
+
+type cachedToken struct {
+	token     string
+	expiresAt time.Time
+}
+
+func getCachedToken(username string) (string, bool) {
+	tokenCache.Lock()
+	defer tokenCache.Unlock()
+	if ct, ok := tokenCache.tokens[username]; ok && time.Now().Before(ct.expiresAt) {
+		return ct.token, true
+	}
+	return "", false
+}
+
+func setCachedToken(username, token string, expiresIn int) {
+	tokenCache.Lock()
+	defer tokenCache.Unlock()
+	tokenCache.tokens[username] = cachedToken{
+		token:     token,
+		expiresAt: time.Now().Add(time.Duration(expiresIn) * time.Second),
+	}
+}
+
+func invalidateCachedToken(username string) {
+	tokenCache.Lock()
+	defer tokenCache.Unlock()
+	delete(tokenCache.tokens, username)
+}
 
 type Credentials struct {
 	Username         string `json:"username"`
@@ -64,7 +99,7 @@ func handleBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := login(creds)
+	token, err := getToken(creds)
 	if err != nil {
 		jsonError(w, "login failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -109,7 +144,7 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 	req.applyDefaults()
 
 	creds := req.Credentials
-	token, err := login(creds)
+	token, err := getToken(creds)
 	if err != nil {
 		jsonError(w, "login failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -192,6 +227,13 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 
 // --- Robinhood API helpers ---
 
+func getToken(creds Credentials) (string, error) {
+	if token, ok := getCachedToken(creds.Username); ok {
+		return token, nil
+	}
+	return login(creds)
+}
+
 func login(creds Credentials) (string, error) {
 	body, _ := json.Marshal(map[string]string{
 		"grant_type":     "password",
@@ -217,9 +259,13 @@ func login(creds Credentials) (string, error) {
 
 	var result struct {
 		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
+	}
+	if result.ExpiresIn > 0 {
+		setCachedToken(creds.Username, result.AccessToken, result.ExpiresIn)
 	}
 	return result.AccessToken, nil
 }
@@ -242,6 +288,11 @@ func graphql(creds Credentials, token, query, operation string, variables map[st
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		invalidateCachedToken(creds.Username)
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
+	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
