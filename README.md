@@ -64,12 +64,6 @@ Returns transactions up to the requested limit. Filtering by `status`/`visibilit
 ]
 ```
 
-| Field | Values |
-|---|---|
-| `type` | `"withdrawal"` (purchase) · `"deposit"` (payment/refund) |
-| `status` | `"POSTED"` · `"PENDING"` |
-| `visibility` | `"VISIBLE"` · `"HIDDEN"` |
-
 ## License
 
 [MIT](LICENSE)
