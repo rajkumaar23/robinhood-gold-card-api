@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	_ "time/tzdata" // embed timezone database for scratch containers
 
 	"github.com/golang-jwt/jwt/v5"
 )
