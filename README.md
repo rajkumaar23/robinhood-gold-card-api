@@ -13,63 +13,62 @@ go run main.go
 
 ## Endpoints
 
+Both endpoints accept a JSON body. All fields in the **Credentials** section are required.
+
+### Credentials (all endpoints)
+
+| Field | Type | Description |
+|---|---|---|
+| `username` | string | Robinhood account email |
+| `password` | string | Robinhood account password |
+| `device_token` | string | Device token registered with Robinhood |
+| `client_id` | string | OAuth client ID for the credit card app |
+| `credit_customer_id` | string | Credit customer ID for your account |
+
+---
+
 ### `POST /balance`
 
 Returns the current statement balance.
 
-**Request body**
-```json
-{
-  "username": "you@example.com",
-  "password": "...",
-  "device_token": "...",
-  "client_id": "...",
-  "credit_customer_id": "..."
-}
-```
-
 **Response**
 ```json
-{
-  "balance": 123.45
-}
+{ "balance": 148.09 }
 ```
 
 ---
 
 ### `POST /transactions`
 
-Returns posted transactions.
+Returns transactions up to the requested limit. Filtering by `status`/`visibility` is left to the caller.
 
-**Request body**
-```json
-{
-  "username": "you@example.com",
-  "password": "...",
-  "device_token": "...",
-  "client_id": "...",
-  "credit_customer_id": "...",
-  "limit": 50,
-  "sort_field": "TIME",
-  "sort_ascending": false
-}
-```
+**Additional fields**
 
-`limit`, `sort_field`, and `sort_ascending` are optional and default to `50`, `"TIME"`, and `false` respectively.
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `limit` | int | `50` | Number of transactions to fetch |
+| `sort_field` | string | `"TIME"` | Field to sort by |
+| `sort_ascending` | bool | `false` | Sort direction |
 
 **Response**
 ```json
 [
   {
-    "date": "2026-03-14",
-    "description": "WHOLE FOODS MARKET Seattle WA",
-    "amount": 42.17,
-    "type": "withdrawal"
+    "date": "2026-03-13",
+    "description": "ANTHROPIC ANTHROPIC.COM CA",
+    "amount": 5.53,
+    "type": "withdrawal",
+    "status": "POSTED",
+    "visibility": "VISIBLE"
   }
 ]
 ```
 
-`type` is either `"withdrawal"` (purchase) or `"deposit"` (payment/refund).
+| Field | Values |
+|---|---|
+| `type` | `"withdrawal"` (purchase) · `"deposit"` (payment/refund) |
+| `status` | `"POSTED"` · `"PENDING"` |
+| `visibility` | `"VISIBLE"` · `"HIDDEN"` |
 
 ## License
 
