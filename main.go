@@ -263,7 +263,12 @@ func login(creds Credentials) (string, error) {
 		"challenge_type": "sms",
 	})
 
-	resp, err := http.Post(baseURL+"/auth/login", "application/json", bytes.NewReader(body))
+	loginReq, _ := http.NewRequest("POST", baseURL+"/auth/login", bytes.NewReader(body))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Header.Set("User-Agent", "Robinhood Credit Card/1.84.0 (iOS 26.0.1;)")
+	loginReq.Header.Set("X-X1-Client", fmt.Sprintf("mobile-app-rh@1.84.0@%s", creds.DeviceToken))
+
+	resp, err := http.DefaultClient.Do(loginReq)
 	if err != nil {
 		return "", err
 	}
@@ -296,6 +301,7 @@ func graphql(creds Credentials, token, query, operation string, variables map[st
 	req, _ := http.NewRequest("POST", baseURL+"/graphql", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", "Robinhood Credit Card/1.84.0 (iOS 26.0.1;)")
 	req.Header.Set("X-X1-Client", fmt.Sprintf("mobile-app-rh@1.84.0@%s", creds.DeviceToken))
 
 	resp, err := http.DefaultClient.Do(req)
