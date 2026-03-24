@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -82,8 +83,8 @@ func main() {
 		port = "8080"
 	}
 
-	http.HandleFunc("/balance", corsMiddleware(handleBalance))
-	http.HandleFunc("/transactions", corsMiddleware(handleTransactions))
+	http.HandleFunc("/balance", loggingMiddleware(recoveryMiddleware(corsMiddleware(handleBalance))))
+	http.HandleFunc("/transactions", loggingMiddleware(recoveryMiddleware(corsMiddleware(handleTransactions))))
 
 	log.Printf("robinhood-api listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
@@ -340,6 +341,37 @@ func (c Credentials) validate() error {
 }
 
 // --- helpers ---
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next(rec, r)
+		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(start))
+	}
+}
+
+func recoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("panic: %v\n%s", err, debug.Stack())
+				jsonError(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next(w, r)
+	}
+}
 
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
